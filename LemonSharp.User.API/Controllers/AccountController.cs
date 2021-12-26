@@ -9,7 +9,6 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using WeihanLi.Common;
-using WeihanLi.Common.Helpers;
 
 namespace LemonSharp.User.API.Controllers;
 
@@ -21,16 +20,19 @@ public class AccountController : ControllerBase
     private readonly UserManager<IdentityUser> _userManager;
     private readonly SignInManager<IdentityUser> _signInManager;
     private readonly ITokenGenerator _tokenGenerator;
+    private readonly ILogger _logger;
 
     public AccountController(UserManager<IdentityUser> userManager,
         SignInManager<IdentityUser> signInManager,
         UserIdentityDbContext userContext,
-        ITokenGenerator tokenGenerator)
+        ITokenGenerator tokenGenerator,
+        ILogger<AccountController> logger)
     {
         _userContext = userContext;
         _userManager = userManager;
         _signInManager = signInManager;
         _tokenGenerator = tokenGenerator;
+        _logger = logger;
     }
     
     [Route("SignIn")]
@@ -80,7 +82,7 @@ public class AccountController : ControllerBase
     [Route("SignUp")]
     [AllowAnonymous]
     [HttpPost]
-    public async Task<IActionResult> SignUpAsync([FromBody] RegisterViewModel regModel)
+    public async Task<IActionResult> SignUpAsync([FromBody] RegisterViewModel regModel, [FromServices] Dapr.Client.DaprClient daprClient)
     {
         var userInfo = new IdentityUser()
         {
@@ -102,6 +104,20 @@ public class AccountController : ControllerBase
                 new Claim(JwtRegisteredClaimNames.NameId, userInfo.Id),
             };
             var token = _tokenGenerator.GenerateToken(claims);
+
+            try
+            {
+                await daprClient.PublishEventAsync("pubsub", "CreateUserEvent", new 
+                {
+                    PhoneNumber = regModel.PhoneNumber,
+                    UserId = userInfo.Id,
+                    UserName = userInfo.UserName,
+                });
+            }
+            catch (System.Exception ex)
+            {
+                _logger.LogError(ex, "Publish CreateUserEvent failed");
+            }
 
             var userToken = new UserTokenEntity
             {
